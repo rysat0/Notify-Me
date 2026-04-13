@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, Mail, Clock } from "lucide-react";
 import { api } from "../lib/api";
 import { ArticleCard } from "./ArticleCard";
 import { AudioPlayer } from "./AudioPlayer";
-import type { Article, BriefingResponse } from "@shared/types";
+import type { Article, BriefingResponse, UserConfig } from "@shared/types";
 
 interface DashboardProps {
   onArticlesLoaded?: (articles: Article[]) => void;
@@ -15,10 +15,12 @@ export function Dashboard({ onArticlesLoaded }: DashboardProps) {
   const [error, setError] = useState("");
   const [initialLoad, setInitialLoad] = useState(true);
   const [hasElevenlabsKey, setHasElevenlabsKey] = useState(false);
+  const [settings, setSettings] = useState<Partial<UserConfig>>({});
 
   useEffect(() => {
     api.getSettings().then((s) => {
       setHasElevenlabsKey(!!s.elevenlabsApiKey);
+      setSettings(s);
     });
   }, []);
 
@@ -58,7 +60,17 @@ export function Dashboard({ onArticlesLoaded }: DashboardProps) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Today's Briefing</h2>
+        <div>
+          <h2 className="text-2xl font-bold">Today's Briefing</h2>
+          {settings.deliveryEmail && settings.inkboxApiKey && (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+              <Clock size={12} />
+              <span>Auto-delivered daily at 8:00 AM EST</span>
+              <Mail size={12} className="ml-1" />
+              <span>{settings.deliveryEmail}</span>
+            </p>
+          )}
+        </div>
         <button
           onClick={handleGenerate}
           disabled={loading}
@@ -109,6 +121,10 @@ export function Dashboard({ onArticlesLoaded }: DashboardProps) {
           <p className="mt-1 text-sm">
             Configure your API key in Settings, then generate your first
             briefing.
+          </p>
+          <p className="mt-3 text-xs text-zinc-600">
+            Once configured, briefings are automatically generated and emailed
+            to you every day at 8:00 AM EST via Inkbox.
           </p>
         </div>
       )}
