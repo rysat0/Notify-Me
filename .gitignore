@@ -1,0 +1,6 @@
+.DS_Store
+.env
+.env.*
+
+# Claude Code project settings (contains local paths)
+.claude/settings.json
