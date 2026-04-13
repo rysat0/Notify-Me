@@ -5,6 +5,7 @@ import settingsRouter from "./routes/settings.js";
 import inkboxRouter from "./routes/inkbox.js";
 import briefingRouter from "./routes/briefing.js";
 import { initInkbox } from "./services/inkbox.js";
+import { initMcpClient } from "./mcp/client.js";
 
 const app = express();
 const PORT = 3001;
@@ -13,6 +14,10 @@ app.use(cors());
 app.use(express.json());
 
 initDb();
+
+initMcpClient().catch(() => {
+  console.log("Obsidian MCP not available — continuing without vault.");
+});
 
 // Health check
 app.get("/api/health", (_req, res) => {

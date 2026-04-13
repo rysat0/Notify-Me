@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
+    "@huggingface/transformers": "^4.0.1",
     "@inkbox/sdk": "^0.2.10",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@notify-me/shared": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "cors": "^2.8.5",
