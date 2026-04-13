@@ -93,3 +93,40 @@ export function getIdentity(): AgentIdentity | null {
 export function getInkboxClient(): Inkbox | null {
   return inkboxClient;
 }
+
+export async function storeApiKeyInVault(
+  name: string,
+  apiKey: string,
+  vaultKey: string
+): Promise<string> {
+  if (!inkboxClient) throw new Error("Inkbox not initialized");
+
+  await inkboxClient.vault.unlock(vaultKey);
+
+  const secret = await inkboxClient.vault.createSecret({
+    name,
+    payload: { type: "api_key", apiKey },
+  });
+
+  if (identity) {
+    await inkboxClient.vault.grantAccess(secret.id, identity.id);
+  }
+
+  return secret.id;
+}
+
+export async function getApiKeyFromVault(
+  secretId: string,
+  vaultKey: string
+): Promise<string | null> {
+  if (!identity) return null;
+
+  try {
+    await inkboxClient!.vault.unlock(vaultKey);
+    const creds = await identity.getCredentials();
+    const apiKey = creds.getApiKey(secretId);
+    return apiKey?.apiKey || null;
+  } catch {
+    return null;
+  }
+}
