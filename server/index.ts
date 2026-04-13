@@ -3,6 +3,7 @@ import cors from "cors";
 import { initDb, getSettings } from "./db/sqlite.js";
 import settingsRouter from "./routes/settings.js";
 import inkboxRouter from "./routes/inkbox.js";
+import inkboxCommandsRouter from "./routes/inkbox-commands.js";
 import briefingRouter from "./routes/briefing.js";
 import { initInkbox } from "./services/inkbox.js";
 import { initMcpClient } from "./mcp/client.js";
@@ -34,6 +35,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/settings", settingsRouter);
 app.use("/api/inkbox", inkboxRouter);
+app.use("/api/inkbox", inkboxCommandsRouter);
 app.use("/api/brief", briefingRouter);
 
 app.listen(PORT, () => {
