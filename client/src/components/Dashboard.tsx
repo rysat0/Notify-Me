@@ -2,18 +2,33 @@ import { useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
 import { ArticleCard } from "./ArticleCard";
-import type { BriefingResponse } from "@shared/types";
+import { AudioPlayer } from "./AudioPlayer";
+import type { Article, BriefingResponse } from "@shared/types";
 
-export function Dashboard() {
+interface DashboardProps {
+  onArticlesLoaded?: (articles: Article[]) => void;
+}
+
+export function Dashboard({ onArticlesLoaded }: DashboardProps) {
   const [briefing, setBriefing] = useState<BriefingResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [initialLoad, setInitialLoad] = useState(true);
+  const [hasElevenlabsKey, setHasElevenlabsKey] = useState(false);
+
+  useEffect(() => {
+    api.getSettings().then((s) => {
+      setHasElevenlabsKey(!!s.elevenlabsApiKey);
+    });
+  }, []);
 
   useEffect(() => {
     api
       .getLatestBriefing()
-      .then((data) => setBriefing(data))
+      .then((data) => {
+        setBriefing(data);
+        if (data) onArticlesLoaded?.(data.articles);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setInitialLoad(false));
   }, []);
@@ -24,6 +39,7 @@ export function Dashboard() {
     try {
       const data = await api.generateBriefing();
       setBriefing(data);
+      onArticlesLoaded?.(data.articles);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate");
     } finally {
@@ -76,6 +92,8 @@ export function Dashboard() {
               Generated: {new Date(briefing.generatedAt).toLocaleString()}
             </p>
           </div>
+
+          <AudioPlayer briefingId={briefing.id} hasElevenlabsKey={hasElevenlabsKey} />
 
           <div className="space-y-3">
             {briefing.articles.map((article) => (

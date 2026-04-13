@@ -1,8 +1,12 @@
+import { useState } from "react";
 import { Routes, Route, Link, useLocation } from "react-router-dom";
 import { Dashboard } from "./components/Dashboard";
 import { Settings } from "./components/Settings";
+import { Chat } from "./components/Chat";
+import type { Article } from "@shared/types";
 
 function App() {
+  const [latestArticles, setLatestArticles] = useState<Article[]>([]);
   const location = useLocation();
 
   const navLink = (to: string, label: string) => (
@@ -26,12 +30,14 @@ function App() {
             <span className="text-blue-500">Notify</span> Me
           </h1>
           {navLink("/", "Dashboard")}
+          {navLink("/chat", "Chat")}
           {navLink("/settings", "Settings")}
         </nav>
       </header>
       <main className="mx-auto max-w-4xl px-6 py-8">
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Dashboard onArticlesLoaded={setLatestArticles} />} />
+          <Route path="/chat" element={<Chat articles={latestArticles} />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
