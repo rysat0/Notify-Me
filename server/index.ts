@@ -5,10 +5,13 @@ import settingsRouter from "./routes/settings.js";
 import inkboxRouter from "./routes/inkbox.js";
 import inkboxCommandsRouter from "./routes/inkbox-commands.js";
 import briefingRouter from "./routes/briefing.js";
+import chatRouter from "./routes/chat.js";
+import ttsRouter from "./routes/tts.js";
 import { initInkbox } from "./services/inkbox.js";
 import { initMcpClient } from "./mcp/client.js";
 import { initEmbedding } from "./services/embedding.js";
 import { initRag } from "./services/rag.js";
+import { startScheduler } from "./services/scheduler.js";
 
 const app = express();
 const PORT = 3001;
@@ -37,6 +40,8 @@ app.use("/api/settings", settingsRouter);
 app.use("/api/inkbox", inkboxRouter);
 app.use("/api/inkbox", inkboxCommandsRouter);
 app.use("/api/brief", briefingRouter);
+app.use("/api/chat", chatRouter);
+app.use("/api/tts", ttsRouter);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
@@ -48,4 +53,7 @@ app.listen(PORT, () => {
       console.log("Inkbox auto-init skipped — configure API key in Settings.")
     );
   }
+
+  // Start cron scheduler for daily briefings
+  startScheduler();
 });
