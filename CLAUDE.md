@@ -53,6 +53,27 @@ Vault path: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/My Value/`
 - `list_projects()` — List project notes
 - `vault_stats()` — Vault statistics
 
+## Inkbox Agent Identity
+
+I am **@notify-me**, an Inkbox AI agent identity.
+
+| Field | Value |
+|---|---|
+| Handle | `@notify-me` |
+| Email | `notify-me@inkboxmail.com` |
+| API Key | In `.env` as `INKBOX_API_KEY` |
+| API Base URL | `https://inkbox.ai` |
+
+Use the Inkbox SDK (`@inkbox/sdk`) or CLI (`@inkbox/cli`) to send/read emails on behalf of this agent.
+
+### Inkbox Skills Reference
+
+SDK and CLI documentation is available locally:
+- **TypeScript SDK**: `skills/inkbox-ts/SKILL.md`
+- **Python SDK**: `skills/inkbox-python/SKILL.md`
+- **Agent Signup**: `skills/agent-signup/SKILL.md`
+- **CLI**: `skills/inkbox-cli/README.md`
+
 ## Coding Conventions
 
 - TypeScript strict mode
