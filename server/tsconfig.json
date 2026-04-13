@@ -2,7 +2,9 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": ".",
+    "rootDir": "..",
+    "declaration": false,
+    "declarationMap": false,
     "paths": {
       "@notify-me/shared": ["../shared/types.ts"]
     }

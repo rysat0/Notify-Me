@@ -1,4 +1,4 @@
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import { getSettings, getDb } from "../db/sqlite.js";
 import { generateBriefing } from "./claude.js";
 import { sendBriefingEmail } from "./inkbox.js";
@@ -7,7 +7,7 @@ import { processIncomingEmails } from "./mail-commands.js";
 import { v4 as uuid } from "uuid";
 import type { Article, BriefingResponse } from "../../shared/types.js";
 
-let scheduledTask: cron.ScheduledTask | null = null;
+let scheduledTask: ScheduledTask | null = null;
 
 export function startScheduler(): void {
   const settings = getSettings();

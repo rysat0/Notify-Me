@@ -101,11 +101,11 @@ export async function storeApiKeyInVault(
 ): Promise<string> {
   if (!inkboxClient) throw new Error("Inkbox not initialized");
 
-  await inkboxClient.vault.unlock(vaultKey);
+  const unlocked = await inkboxClient.vault.unlock(vaultKey);
 
-  const secret = await inkboxClient.vault.createSecret({
+  const secret = await unlocked.createSecret({
     name,
-    payload: { type: "api_key", apiKey },
+    payload: { apiKey } satisfies import("@inkbox/sdk").APIKeyPayload,
   });
 
   if (identity) {
