@@ -4,6 +4,8 @@
 node_modules/
 dist/
 *.db
+data/
+data/vectra-index/
 
 # Claude Code project settings (contains local paths)
 .claude/settings.json
