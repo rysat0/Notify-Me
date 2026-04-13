@@ -4,7 +4,7 @@
 
 ## Overview
 
-Notify Me is a personalized AI news briefing web app powered by Claude API (BYOK). Built within a 2-hour hackathon. This document specifies the tech selection and overall architecture design.
+Notify Me is a personalized AI news briefing web app powered by Claude API (BYOK) + Inkbox SDK. Built for Hack-a-Sprint 2026 (2.5-hour hackathon). Features an Inkbox AI agent Identity that auto-delivers news briefings via email. This document specifies the tech selection and overall architecture design.
 
 ---
 
@@ -37,10 +37,13 @@ Vite + Express integrated architecture. Vite proxies `/api/*` requests to Expres
 │  │ (RAG/dedup) │  │ (settings) │  │ (optional)     │  │
 │  └─────────────┘  └────────────┘  └────────────────┘  │
 │         │                                               │
-│  ┌──────▼──────────────────────┐                       │
-│  │ @xenova/transformers        │                       │
-│  │ (all-MiniLM-L6-v2 embedding)│                       │
-│  └─────────────────────────────┘                       │
+│  ┌──────▼──────────────────────┐  ┌────────────────┐  │
+│  │ @huggingface/transformers   │  │ Inkbox SDK     │  │
+│  │ (all-MiniLM-L6-v2 embedding)│  │ ・Identity     │  │
+│  └─────────────────────────────┘  │ ・Email send   │  │
+│                                    │ ・Email recv   │  │
+│                                    │ ・Vault (keys) │  │
+│                                    └────────────────┘  │
 └─────────────────────────────────────────────────────────┘
          │ (Phase 2: MCP connection)
 ┌────────▼────────────────────┐
@@ -65,6 +68,7 @@ Vite + Express integrated architecture. Vite proxies `/api/*` requests to Expres
 | Server runtime | tsx | ts-node, tsc+node | No transpilation needed, maximum dev speed |
 | External knowledge | Obsidian vault MCP (existing) | Build new | Reuse already-running MCP server |
 | LLM model | claude-sonnet-4-20250514 | Opus, Haiku | Speed/cost/quality balance |
+| AI Agent platform | Inkbox SDK (@inkbox/sdk) | Custom SMTP, SendGrid | Hackathon requirement. Identity+Email+Vault all-in-one |
 
 ---
 
@@ -104,6 +108,7 @@ Notify-Me/
 │   │   └── tts.ts
 │   ├── services/
 │   │   ├── claude.ts         # Claude API client
+│   │   ├── inkbox.ts         # Inkbox SDK: Identity + email send/recv
 │   │   ├── rag.ts            # Vectra + embedding
 │   │   ├── scheduler.ts      # node-cron (Phase 3)
 │   │   └── tts.ts            # ElevenLabs (Phase 3)
@@ -131,12 +136,22 @@ Notify-Me/
 ```
 POST /api/brief/generate { categories, language, timeRange }
   → Claude API (web_search tool) searches + summarizes per category
-  → @xenova/transformers generates embedding for each article
+  → @huggingface/transformers generates embedding for each article
   → Vectra similarity search (cosine > 0.85)
     → Duplicate: skip or flag as "follow-up"
     → New: store as new article
   → SQLite stores article metadata + briefing history
+  → Inkbox Identity sends HTML briefing email to delivery address
   → Response: { summary, articles[], relatedPast[] }
+```
+
+### Email Command Processing (Phase 2)
+
+```
+Inbound email → Inkbox iterUnreadEmails() polling
+  → Parse email body ("tech news", "change language ja", etc.)
+  → Execute command: update settings or trigger briefing generation
+  → Reply via email with results
 ```
 
 ### Chat Deep Dive (Phase 3)
@@ -159,6 +174,9 @@ POST /api/chat { message, articleRefs[] }
 | `POST` | `/api/brief/generate` | Generate briefing | 1 |
 | `GET` | `/api/brief/latest` | Get latest briefing | 1 |
 | `GET` | `/api/brief/history` | List past briefings | 2 |
+| `POST` | `/api/inkbox/setup` | Create Inkbox Identity + mailbox | 1 |
+| `GET` | `/api/inkbox/status` | Check Inkbox Identity status | 1 |
+| `POST` | `/api/inkbox/check-mail` | Process inbound email commands | 2 |
 | `POST` | `/api/chat` | Article deep-dive chat | 3 |
 | `POST` | `/api/tts/generate` | Generate podcast audio | 3 |
 | `GET` | `/api/tts/:id` | Get generated audio | 3 |
@@ -178,7 +196,10 @@ CREATE TABLE settings (
   categories TEXT DEFAULT '["tech","ai"]',
   time_range INTEGER DEFAULT 24,
   sources TEXT DEFAULT '[]',
-  schedule_time TEXT DEFAULT '0 8 * * *'
+  schedule_time TEXT DEFAULT '0 8 * * *',
+  inkbox_api_key TEXT DEFAULT '',
+  inkbox_identity_handle TEXT DEFAULT 'notify-me',
+  delivery_email TEXT DEFAULT ''
 );
 
 CREATE TABLE articles (
@@ -215,22 +236,25 @@ CREATE TABLE chat_messages (
 
 ## 7. Phased Scope
 
-### Phase 1: MVP (Target 60 min)
+### Phase 1: MVP + Inkbox Email Delivery (Target 70 min)
 - Project scaffold (Vite + Express + Tailwind + shadcn/ui)
 - SQLite setup + settings table
-- Settings screen (API key input + categories, language, time range)
+- Settings screen (API keys + categories, language, time range + Inkbox config)
 - Claude API web_search news fetching → summary + article generation
+- **Inkbox Identity creation + HTML briefing email delivery**
 - Dashboard displaying results
 
-### Phase 2: Differentiating Features (Target 30 min)
-- Vectra + @xenova/transformers RAG setup
+### Phase 2: RAG + Inkbox Extensions (Target 30 min)
+- Vectra + @huggingface/transformers RAG setup
 - Embedding generation on article save → Vectra storage
 - Deduplication + related article flagging
+- **Inkbox email command processing** (reply to change categories, etc.)
+- **Inkbox Vault for encrypted API key storage**
 - Obsidian vault MCP client connection (time permitting)
 
 ### Phase 3: Extended Features (Remaining time)
 1. Chat deep-dive (article citation → Claude dialogue)
-2. node-cron scheduler
+2. node-cron scheduler (with email delivery)
 3. ElevenLabs TTS podcast generation
 
 ---
@@ -247,9 +271,10 @@ lucide-react
 # server/
 express, cors
 @anthropic-ai/sdk
+@inkbox/sdk
 better-sqlite3
 vectra
-@xenova/transformers
+@huggingface/transformers
 @modelcontextprotocol/sdk
 node-cron
 uuid
@@ -271,3 +296,5 @@ typescript, tsx
 | Cosine threshold 0.85 validity | Adopt as default, adjustable after testing |
 | Concurrent generation requests | UI button disable + server-side flag |
 | Phase 2 MCP connection | @modelcontextprotocol/sdk Client via stdio |
+| Inkbox unverified account limits | Pre-create Identity + verify email before event. Unverified: 10 sends/day |
+| Inkbox Vault key management | Store vault key in .env, unlock on server startup |

@@ -2,8 +2,9 @@
 
 ## Project Overview
 
-AI-powered personalized daily news briefing web app. Built for a US-based hackathon (2-hour time limit).  
-Claude API (BYOK) for LLM, optional ElevenLabs TTS (BYOK) for podcast-style audio.
+AI-powered personalized daily news briefing web app with Inkbox AI agent email delivery.  
+Built for Hack-a-Sprint 2026 (2.5-hour hackathon, Boston, MA).  
+Claude API (BYOK) for LLM, Inkbox SDK for agent identity + email, optional ElevenLabs TTS (BYOK) for podcast-style audio.
 
 ## Documentation Rules
 
@@ -21,15 +22,18 @@ When creating or updating any doc, always update both language versions.
 
 ## Tech Stack
 
-- **Frontend**: React + TypeScript (Vite)
+- **Frontend**: React 19 + TypeScript (Vite) + Tailwind v4 + shadcn/ui
 - **Backend**: Node.js + Express
-- **LLM**: Claude API (Anthropic SDK) — BYOK
-- **Vector DB**: ChromaDB or sqlite-vec
-- **DB**: SQLite
-- **MCP Server**: TypeScript (MCP SDK)
+- **LLM**: Claude API (Anthropic SDK) — BYOK, web_search_20250305 tool
+- **AI Agent**: Inkbox SDK (@inkbox/sdk) — Identity, Email (send/recv), Vault
+- **Vector DB**: Vectra (local JSON-based)
+- **Embedding**: @huggingface/transformers (all-MiniLM-L6-v2, local)
+- **DB**: SQLite (better-sqlite3)
+- **MCP**: Obsidian vault MCP server (existing, Python/FastMCP)
 - **Scheduler**: node-cron
 - **TTS**: ElevenLabs API — BYOK, optional
-- **Web Search**: Brave Search API / Tavily
+- **Package Manager**: pnpm
+- **Server Runtime**: tsx (no transpilation)
 
 ## External Knowledge Source — Obsidian Vault
 
@@ -61,5 +65,6 @@ Vault path: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/My Value/`
 
 - BYOK: all API keys provided by the user at runtime, stored locally only
 - Local-first: everything runs on localhost, no external deployment needed
+- Inkbox agent: AI agent with its own email identity for briefing delivery and command processing
 - MCP for RAG: use MCP protocol to connect Claude with vector DB for deduplication
 - Modular phases: MVP works standalone, each phase adds independent features

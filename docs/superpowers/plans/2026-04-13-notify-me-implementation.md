@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a personalized AI news briefing web app in a 2-hour hackathon using Claude API BYOK with web search, local RAG deduplication, and optional TTS.
+**Goal:** Build a personalized AI news briefing web app with Inkbox AI agent email delivery for Hack-a-Sprint 2026 (2.5h hackathon). Uses Claude API BYOK with web search, Inkbox SDK for agent identity + email, local RAG deduplication, and optional TTS.
 
-**Architecture:** Vite proxy + Express integrated monorepo. Vite dev server (:5173) proxies `/api/*` to Express (:3001). Claude API with `web_search_20250305` tool fetches and summarizes news. Vectra + @huggingface/transformers provides local RAG for deduplication. Obsidian vault MCP server connects existing knowledge base.
+**Architecture:** Vite proxy + Express integrated monorepo. Vite dev server (:5173) proxies `/api/*` to Express (:3001). Claude API with `web_search_20250305` tool fetches and summarizes news. Inkbox SDK creates an AI agent Identity that delivers briefings via email and receives commands. Vectra + @huggingface/transformers provides local RAG for deduplication. Inkbox Vault stores API keys encrypted.
 
-**Tech Stack:** React 19 + TypeScript + Tailwind v4 + shadcn/ui, Express, @anthropic-ai/sdk, better-sqlite3, Vectra, @huggingface/transformers, @modelcontextprotocol/sdk, pnpm
+**Tech Stack:** React 19 + TypeScript + Tailwind v4 + shadcn/ui, Express, @anthropic-ai/sdk, @inkbox/sdk, better-sqlite3, Vectra, @huggingface/transformers, @modelcontextprotocol/sdk, pnpm
 
 ---
 
@@ -41,8 +41,10 @@
 | Create | `server/routes/settings.ts` | GET/PUT /api/settings |
 | Create | `server/routes/briefing.ts` | POST /api/brief/generate, GET /api/brief/latest |
 | Create | `server/services/claude.ts` | Claude API client with web_search (model selectable) |
+| Create | `server/services/inkbox.ts` | Inkbox SDK: Identity mgmt, email send/recv |
+| Create | `server/routes/inkbox.ts` | Inkbox Identity setup + status API |
 
-### Phase 2: RAG + MCP
+### Phase 2: RAG + MCP + Inkbox Extensions
 
 | Action | File | Responsibility |
 |--------|------|----------------|
@@ -52,6 +54,8 @@
 | Modify | `server/routes/briefing.ts` | Add dedup + related articles |
 | Create | `server/mcp/client.ts` | Obsidian vault MCP client |
 | Modify | `client/src/components/ArticleCard.tsx` | Show "follow-up" badge + related links |
+| Create | `server/services/mail-commands.ts` | Inkbox email command parser + handler |
+| Modify | `server/services/inkbox.ts` | Add Vault integration for API key storage |
 
 ### Phase 3: Extensions
 
@@ -66,7 +70,7 @@
 
 ---
 
-## Phase 1: MVP (Target 60 min)
+## Phase 1: MVP + Inkbox Email Delivery (Target 70 min)
 
 ### Task 1: Project Scaffold
 
@@ -279,6 +283,7 @@ export default App;
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
+    "@inkbox/sdk": "^0.2.10",
     "@notify-me/shared": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "cors": "^2.8.5",
@@ -415,6 +420,15 @@ export interface UserConfig {
   timeRange: number;
   sources: string[];
   scheduleTime: string;
+  inkboxApiKey: string;
+  inkboxIdentityHandle: string;
+  deliveryEmail: string;
+}
+
+export interface InkboxStatus {
+  connected: boolean;
+  identityHandle: string | null;
+  emailAddress: string | null;
 }
 
 export interface ChatMessage {
@@ -448,7 +462,10 @@ CREATE TABLE IF NOT EXISTS settings (
   categories TEXT DEFAULT '["tech","ai"]',
   time_range INTEGER DEFAULT 24,
   sources TEXT DEFAULT '[]',
-  schedule_time TEXT DEFAULT '0 8 * * *'
+  schedule_time TEXT DEFAULT '0 8 * * *',
+  inkbox_api_key TEXT DEFAULT '',
+  inkbox_identity_handle TEXT DEFAULT 'notify-me',
+  delivery_email TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS briefings (
@@ -530,6 +547,9 @@ export function getSettings(): UserConfig {
     timeRange: row.time_range as number,
     sources: JSON.parse(row.sources as string),
     scheduleTime: row.schedule_time as string,
+    inkboxApiKey: (row.inkbox_api_key as string) || "",
+    inkboxIdentityHandle: (row.inkbox_identity_handle as string) || "notify-me",
+    deliveryEmail: (row.delivery_email as string) || "",
   };
 }
 
@@ -578,6 +598,18 @@ export function updateSettings(config: Partial<UserConfig>): void {
     fields.push("schedule_time = ?");
     values.push(config.scheduleTime);
   }
+  if (config.inkboxApiKey !== undefined) {
+    fields.push("inkbox_api_key = ?");
+    values.push(config.inkboxApiKey);
+  }
+  if (config.inkboxIdentityHandle !== undefined) {
+    fields.push("inkbox_identity_handle = ?");
+    values.push(config.inkboxIdentityHandle);
+  }
+  if (config.deliveryEmail !== undefined) {
+    fields.push("delivery_email = ?");
+    values.push(config.deliveryEmail);
+  }
 
   if (fields.length > 0) {
     values.push(1);
@@ -624,6 +656,7 @@ router.get("/", (_req, res) => {
     ...settings,
     claudeApiKey: settings.claudeApiKey ? "sk-...configured" : "",
     elevenlabsApiKey: settings.elevenlabsApiKey ? "sk-...configured" : "",
+    inkboxApiKey: settings.inkboxApiKey ? "ApiKey_...configured" : "",
   });
 });
 
@@ -636,6 +669,7 @@ router.put("/", (req, res) => {
     ...settings,
     claudeApiKey: settings.claudeApiKey ? "sk-...configured" : "",
     elevenlabsApiKey: settings.elevenlabsApiKey ? "sk-...configured" : "",
+    inkboxApiKey: settings.inkboxApiKey ? "ApiKey_...configured" : "",
   });
 });
 
@@ -831,6 +865,7 @@ import { Router } from "express";
 import { v4 as uuid } from "uuid";
 import { getDb, getSettings } from "../db/sqlite.js";
 import { generateBriefing } from "../services/claude.js";
+import { sendBriefingEmail } from "../services/inkbox.js";
 import type {
   Article,
   BriefingResponse,
@@ -920,6 +955,13 @@ router.post("/generate", async (req, res) => {
       generatedAt: new Date().toISOString(),
     };
 
+    // Send briefing via Inkbox email (non-blocking)
+    if (settings.deliveryEmail && settings.inkboxApiKey) {
+      sendBriefingEmail(response, settings).catch((err) =>
+        console.error("Email delivery failed:", err)
+      );
+    }
+
     res.json(response);
   } catch (err) {
     console.error("Briefing generation failed:", err);
@@ -982,12 +1024,199 @@ export default router;
 
 ```bash
 git add -A
-git commit -m "feat: briefing API route (generate + latest)"
+git commit -m "feat: briefing API route (generate + latest + Inkbox email)"
 ```
 
 ---
 
-### Task 6: Frontend — Dashboard + Settings + ArticleCard
+### Task 6: Inkbox Service + Email Delivery
+
+**Files:**
+- Create: `server/services/inkbox.ts`
+- Create: `server/routes/inkbox.ts`
+- Modify: `server/index.ts`
+
+- [ ] **Step 1: Create server/services/inkbox.ts**
+
+```typescript
+import { Inkbox, type AgentIdentity } from "@inkbox/sdk";
+import type { UserConfig, BriefingResponse, InkboxStatus } from "../../shared/types.js";
+
+let inkboxClient: Inkbox | null = null;
+let identity: AgentIdentity | null = null;
+
+export async function initInkbox(apiKey: string, handle: string): Promise<InkboxStatus> {
+  try {
+    inkboxClient = new Inkbox({ apiKey });
+    
+    // Try to get existing identity, create if not found
+    try {
+      identity = await inkboxClient.getIdentity(handle);
+    } catch {
+      identity = await inkboxClient.createIdentity(handle, {
+        displayName: "Notify Me Agent",
+      });
+      await identity.createMailbox({ displayName: "Notify Me" });
+    }
+
+    console.log(`Inkbox identity ready: ${identity.emailAddress}`);
+    return {
+      connected: true,
+      identityHandle: identity.agentHandle,
+      emailAddress: identity.emailAddress || null,
+    };
+  } catch (err) {
+    console.error("Inkbox init failed:", err);
+    inkboxClient = null;
+    identity = null;
+    return { connected: false, identityHandle: null, emailAddress: null };
+  }
+}
+
+export async function sendBriefingEmail(
+  briefing: BriefingResponse,
+  settings: UserConfig
+): Promise<void> {
+  if (!identity || !settings.deliveryEmail) return;
+
+  const articleHtml = briefing.articles
+    .map(
+      (a) => `
+      <div style="margin-bottom:20px;padding:16px;border:1px solid #333;border-radius:8px;background:#1a1a2e;">
+        <h3 style="margin:0 0 8px;color:#e2e8f0;">${a.title}</h3>
+        <p style="margin:0 0 4px;font-size:12px;color:#94a3b8;">
+          ${a.source} · ${a.category}${a.isFollowUp ? ' <span style="background:#78350f;color:#fbbf24;padding:2px 6px;border-radius:4px;font-size:11px;">Follow-up</span>' : ""}
+        </p>
+        <p style="margin:8px 0;color:#cbd5e1;">${a.summary}</p>
+        ${a.sourceUrl ? `<a href="${a.sourceUrl}" style="color:#60a5fa;font-size:12px;">Read source →</a>` : ""}
+      </div>`
+    )
+    .join("");
+
+  const html = `
+    <div style="max-width:600px;margin:0 auto;font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;border-radius:12px;">
+      <h1 style="font-size:24px;margin:0 0 4px;">
+        <span style="color:#3b82f6;">Notify</span> Me — Daily Briefing
+      </h1>
+      <p style="font-size:12px;color:#64748b;margin:0 0 20px;">
+        ${new Date(briefing.generatedAt).toLocaleDateString()} · ${briefing.articles.length} articles
+      </p>
+      <div style="padding:16px;background:#1e293b;border-radius:8px;margin-bottom:20px;">
+        <h2 style="font-size:14px;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin:0 0 8px;">Summary</h2>
+        <p style="margin:0;line-height:1.6;color:#e2e8f0;">${briefing.summary}</p>
+      </div>
+      ${articleHtml}
+      <p style="font-size:11px;color:#475569;margin-top:24px;text-align:center;">
+        Reply to this email with commands: "generate", "categories tech ai", "language ja"
+      </p>
+    </div>
+  `;
+
+  await identity.sendEmail({
+    to: [settings.deliveryEmail],
+    subject: `Notify Me Briefing — ${new Date().toLocaleDateString()}`,
+    bodyText: `${briefing.summary}\n\n${briefing.articles.map((a) => `${a.title}\n${a.summary}`).join("\n\n")}`,
+    bodyHtml: html,
+  });
+
+  console.log(`Briefing email sent to ${settings.deliveryEmail}`);
+}
+
+export function getInkboxStatus(): InkboxStatus {
+  return {
+    connected: identity !== null,
+    identityHandle: identity?.agentHandle || null,
+    emailAddress: identity?.emailAddress || null,
+  };
+}
+
+export function getIdentity(): AgentIdentity | null {
+  return identity;
+}
+
+export function getInkboxClient(): Inkbox | null {
+  return inkboxClient;
+}
+```
+
+- [ ] **Step 2: Create server/routes/inkbox.ts**
+
+```typescript
+import { Router } from "express";
+import { getSettings } from "../db/sqlite.js";
+import { initInkbox, getInkboxStatus } from "../services/inkbox.js";
+
+const router = Router();
+
+// POST /api/inkbox/setup — create or reconnect Identity
+router.post("/setup", async (req, res) => {
+  const settings = getSettings();
+  if (!settings.inkboxApiKey) {
+    res.status(400).json({ error: "Inkbox API key not configured" });
+    return;
+  }
+
+  const status = await initInkbox(
+    settings.inkboxApiKey,
+    settings.inkboxIdentityHandle || "notify-me"
+  );
+  res.json(status);
+});
+
+// GET /api/inkbox/status
+router.get("/status", (_req, res) => {
+  res.json(getInkboxStatus());
+});
+
+export default router;
+```
+
+- [ ] **Step 3: Add Inkbox routes to server/index.ts**
+
+Add imports:
+
+```typescript
+import inkboxRouter from "./routes/inkbox.js";
+import { initInkbox } from "./services/inkbox.js";
+```
+
+Add route:
+
+```typescript
+app.use("/api/inkbox", inkboxRouter);
+```
+
+Add auto-init after `app.listen()`:
+
+```typescript
+// Auto-init Inkbox if API key is configured
+const settings = (await import("./db/sqlite.js")).getSettings();
+if (settings.inkboxApiKey) {
+  initInkbox(settings.inkboxApiKey, settings.inkboxIdentityHandle || "notify-me").catch(() =>
+    console.log("Inkbox auto-init skipped — configure API key in Settings.")
+  );
+}
+```
+
+- [ ] **Step 4: Test Inkbox setup**
+
+```bash
+cd /Users/k22062kk/Downloads/Notify-Me
+pnpm dev
+```
+
+If INKBOX_API_KEY is in settings, console should show `Inkbox identity ready: notify-me-xxx@inkboxmail.com`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat: Inkbox service — Identity creation + HTML email delivery"
+```
+
+---
+
+### Task 7: Frontend — Dashboard + Settings + ArticleCard
 
 **Files:**
 - Create: `client/src/lib/api.ts`
@@ -1034,6 +1263,17 @@ export const api = {
 
   getLatestBriefing: () =>
     fetchJson<BriefingResponse | null>("/api/brief/latest"),
+
+  setupInkbox: () =>
+    fetchJson<{ connected: boolean; emailAddress: string | null }>(
+      "/api/inkbox/setup",
+      { method: "POST" }
+    ),
+
+  getInkboxStatus: () =>
+    fetchJson<{ connected: boolean; emailAddress: string | null }>(
+      "/api/inkbox/status"
+    ),
 };
 ```
 
@@ -1225,11 +1465,14 @@ export function Settings() {
   const [config, setConfig] = useState<Partial<UserConfig>>({});
   const [claudeKey, setClaudeKey] = useState("");
   const [elevenlabsKey, setElevenlabsKey] = useState("");
+  const [inkboxKey, setInkboxKey] = useState("");
+  const [inkboxStatus, setInkboxStatus] = useState<{ connected: boolean; emailAddress: string | null }>({ connected: false, emailAddress: null });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     api.getSettings().then((s) => setConfig(s));
+    fetch("/api/inkbox/status").then((r) => r.json()).then(setInkboxStatus).catch(() => {});
   }, []);
 
   async function handleSave() {
@@ -1237,11 +1480,20 @@ export function Settings() {
     const updates: Partial<UserConfig> = { ...config };
     if (claudeKey) updates.claudeApiKey = claudeKey;
     if (elevenlabsKey) updates.elevenlabsApiKey = elevenlabsKey;
+    if (inkboxKey) updates.inkboxApiKey = inkboxKey;
 
     await api.updateSettings(updates);
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+
+    // Auto-setup Inkbox if key was just provided
+    if (inkboxKey) {
+      fetch("/api/inkbox/setup", { method: "POST" })
+        .then((r) => r.json())
+        .then(setInkboxStatus)
+        .catch(() => {});
+    }
   }
 
   function toggleCategory(cat: string) {
@@ -1279,6 +1531,55 @@ export function Settings() {
             placeholder={config.elevenlabsApiKey || "sk-..."}
             value={elevenlabsKey}
             onChange={(e) => setElevenlabsKey(e.target.value)}
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600"
+          />
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <h3 className="text-lg font-semibold text-zinc-300">Inkbox Agent</h3>
+        {inkboxStatus.connected && (
+          <div className="rounded-lg border border-green-800 bg-green-950 p-3 text-sm">
+            <span className="text-green-400">Connected</span>
+            <span className="ml-2 text-zinc-400">{inkboxStatus.emailAddress}</span>
+          </div>
+        )}
+        <div>
+          <label className="mb-1 block text-sm text-zinc-400">
+            Inkbox API Key *
+          </label>
+          <input
+            type="password"
+            placeholder={config.inkboxApiKey || "ApiKey_..."}
+            value={inkboxKey}
+            onChange={(e) => setInkboxKey(e.target.value)}
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm text-zinc-400">
+            Identity Handle
+          </label>
+          <input
+            type="text"
+            value={config.inkboxIdentityHandle || "notify-me"}
+            onChange={(e) =>
+              setConfig({ ...config, inkboxIdentityHandle: e.target.value })
+            }
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm text-zinc-400">
+            Delivery Email (briefings sent here)
+          </label>
+          <input
+            type="email"
+            placeholder="you@example.com"
+            value={config.deliveryEmail || ""}
+            onChange={(e) =>
+              setConfig({ ...config, deliveryEmail: e.target.value })
+            }
             className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600"
           />
         </div>
@@ -1513,9 +1814,9 @@ git commit -m "feat: Phase 1 MVP — Dashboard + Settings + Briefing generation"
 
 ---
 
-## Phase 2: RAG + MCP (Target 30 min)
+## Phase 2: RAG + MCP + Inkbox Extensions (Target 30 min)
 
-### Task 7: Embedding Service
+### Task 8: Embedding Service
 
 **Files:**
 - Create: `server/services/embedding.ts`
@@ -1569,7 +1870,7 @@ git commit -m "feat: embedding service (@huggingface/transformers, MiniLM)"
 
 ---
 
-### Task 8: RAG Service (Vectra)
+### Task 9: RAG Service (Vectra)
 
 **Files:**
 - Create: `server/services/rag.ts`
@@ -1766,7 +2067,7 @@ git commit -m "feat: Phase 2 RAG — Vectra dedup + related article linking"
 
 ---
 
-### Task 9: Obsidian Vault MCP Client
+### Task 10: Obsidian Vault MCP Client
 
 **Files:**
 - Create: `server/mcp/client.ts`
@@ -1879,9 +2180,264 @@ git commit -m "feat: Obsidian vault MCP client integration"
 
 ---
 
+### Task 11: Inkbox Email Commands
+
+**Files:**
+- Create: `server/services/mail-commands.ts`
+- Create: `server/routes/inkbox-commands.ts`
+- Modify: `server/index.ts`
+
+- [ ] **Step 1: Create server/services/mail-commands.ts**
+
+```typescript
+import { getIdentity } from "./inkbox.js";
+import { getSettings, updateSettings } from "../db/sqlite.js";
+import { generateBriefing } from "./claude.js";
+import { sendBriefingEmail } from "./inkbox.js";
+import { v4 as uuid } from "uuid";
+import { getDb } from "../db/sqlite.js";
+import type { Article, BriefingResponse } from "../../shared/types.js";
+
+interface ParsedCommand {
+  action: "generate" | "categories" | "language" | "help" | "unknown";
+  args: string[];
+}
+
+function parseCommand(text: string): ParsedCommand {
+  const cleaned = text.trim().toLowerCase().split("\n")[0];
+
+  if (cleaned.includes("generate") || cleaned.includes("briefing") || cleaned.includes("news")) {
+    return { action: "generate", args: [] };
+  }
+  if (cleaned.startsWith("categories") || cleaned.startsWith("topics")) {
+    const args = cleaned.replace(/^(categories|topics)\s*/i, "").split(/[\s,]+/).filter(Boolean);
+    return { action: "categories", args };
+  }
+  if (cleaned.startsWith("language") || cleaned.startsWith("lang")) {
+    const args = cleaned.replace(/^(language|lang)\s*/i, "").split(/\s+/).filter(Boolean);
+    return { action: "language", args };
+  }
+  if (cleaned.includes("help")) {
+    return { action: "help", args: [] };
+  }
+  return { action: "unknown", args: [] };
+}
+
+export async function processIncomingEmails(): Promise<number> {
+  const identity = getIdentity();
+  if (!identity) return 0;
+
+  let processed = 0;
+  const unreadIds: string[] = [];
+
+  for await (const msg of identity.iterUnreadEmails()) {
+    if (msg.direction === "outbound") continue;
+    unreadIds.push(msg.id);
+
+    const detail = await identity.getMessage(msg.id);
+    const body = detail.bodyText || "";
+    const command = parseCommand(body);
+    const settings = getSettings();
+
+    let replyText = "";
+
+    switch (command.action) {
+      case "generate": {
+        replyText = "Generating your briefing now... You'll receive it shortly.";
+        // Trigger briefing generation asynchronously
+        (async () => {
+          const allArticles: Article[] = [];
+          const allSummaries: string[] = [];
+          for (const category of settings.categories) {
+            const result = await generateBriefing({
+              apiKey: settings.claudeApiKey,
+              model: settings.model,
+              category,
+              language: settings.language,
+              timeRange: settings.timeRange,
+              summaryLength: settings.summaryLength,
+              bodyLength: settings.bodyLength,
+            });
+            allSummaries.push(result.summary);
+            allArticles.push(...result.articles);
+          }
+          const db = getDb();
+          const briefingId = uuid();
+          const summary = allSummaries.join("\n\n");
+          db.prepare("INSERT INTO briefings (id, summary, settings_snapshot) VALUES (?, ?, ?)").run(
+            briefingId, summary, JSON.stringify(settings)
+          );
+          const response: BriefingResponse = {
+            id: briefingId, summary, articles: allArticles,
+            relatedPast: [], generatedAt: new Date().toISOString(),
+          };
+          await sendBriefingEmail(response, settings);
+        })().catch(console.error);
+        break;
+      }
+      case "categories": {
+        if (command.args.length > 0) {
+          updateSettings({ categories: command.args });
+          replyText = `Categories updated to: ${command.args.join(", ")}`;
+        } else {
+          replyText = `Current categories: ${settings.categories.join(", ")}\n\nReply with: categories tech ai finance`;
+        }
+        break;
+      }
+      case "language": {
+        const lang = command.args[0];
+        if (lang && ["en", "ja", "zh"].includes(lang)) {
+          updateSettings({ language: lang as "en" | "ja" | "zh" });
+          replyText = `Language updated to: ${lang}`;
+        } else {
+          replyText = `Current language: ${settings.language}\nSupported: en, ja, zh`;
+        }
+        break;
+      }
+      case "help": {
+        replyText = [
+          "Notify Me Agent — Commands:",
+          "",
+          "generate — Generate a new briefing",
+          "categories tech ai finance — Set news categories",
+          "language en — Set language (en/ja/zh)",
+          "help — Show this help",
+        ].join("\n");
+        break;
+      }
+      default: {
+        replyText = `I didn't understand that command. Reply "help" for available commands.`;
+      }
+    }
+
+    // Send reply
+    await identity.sendEmail({
+      to: [msg.fromAddress],
+      subject: `Re: ${msg.subject}`,
+      bodyText: replyText,
+      inReplyToMessageId: msg.id,
+    });
+
+    processed++;
+  }
+
+  if (unreadIds.length > 0) {
+    await identity.markEmailsRead(unreadIds);
+  }
+
+  return processed;
+}
+```
+
+- [ ] **Step 2: Create server/routes/inkbox-commands.ts**
+
+```typescript
+import { Router } from "express";
+import { processIncomingEmails } from "../services/mail-commands.js";
+
+const router = Router();
+
+// POST /api/inkbox/check-mail — manually trigger email command processing
+router.post("/check-mail", async (_req, res) => {
+  try {
+    const processed = await processIncomingEmails();
+    res.json({ processed });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to process emails" });
+  }
+});
+
+export default router;
+```
+
+- [ ] **Step 3: Add route to server/index.ts**
+
+```typescript
+import inkboxCommandsRouter from "./routes/inkbox-commands.js";
+
+app.use("/api/inkbox", inkboxCommandsRouter);
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A
+git commit -m "feat: Inkbox email command processing (generate, categories, language, help)"
+```
+
+---
+
+### Task 12: Inkbox Vault for API Key Storage
+
+**Files:**
+- Modify: `server/services/inkbox.ts`
+- Modify: `server/db/sqlite.ts`
+
+- [ ] **Step 1: Add Vault functions to server/services/inkbox.ts**
+
+Add after the existing exports:
+
+```typescript
+export async function storeApiKeyInVault(
+  name: string,
+  apiKey: string,
+  vaultKey: string
+): Promise<string> {
+  if (!inkboxClient) throw new Error("Inkbox not initialized");
+
+  await inkboxClient.vault.unlock(vaultKey);
+
+  const secret = await inkboxClient.vault.createSecret({
+    name,
+    payload: { type: "api_key", apiKey },
+  });
+
+  if (identity) {
+    await inkboxClient.vault.grantAccess(secret.id, identity.id);
+  }
+
+  return secret.id;
+}
+
+export async function getApiKeyFromVault(
+  secretId: string,
+  vaultKey: string
+): Promise<string | null> {
+  if (!identity) return null;
+
+  try {
+    await inkboxClient!.vault.unlock(vaultKey);
+    const creds = await identity.getCredentials();
+    const apiKey = creds.getApiKey(secretId);
+    return apiKey?.apiKey || null;
+  } catch {
+    return null;
+  }
+}
+```
+
+- [ ] **Step 2: Add INKBOX_VAULT_KEY to .env reference**
+
+The `.env` file should include:
+
+```
+INKBOX_VAULT_KEY=your-vault-key-here
+```
+
+And `server/index.ts` should pass `process.env.INKBOX_VAULT_KEY` when vault operations are needed.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add -A
+git commit -m "feat: Inkbox Vault integration for encrypted API key storage"
+```
+
+---
+
 ## Phase 3: Extensions (Remaining Time)
 
-### Task 10: Chat Deep-Dive
+### Task 13: Chat Deep-Dive
 
 **Files:**
 - Create: `server/routes/chat.ts`
@@ -2196,7 +2752,7 @@ git commit -m "feat: Phase 3 — Chat deep-dive with article citations + Obsidia
 
 ---
 
-### Task 11: Scheduler (node-cron)
+### Task 14: Scheduler (node-cron)
 
 **Files:**
 - Create: `server/services/scheduler.ts`
@@ -2216,9 +2772,11 @@ pnpm add -D @types/node-cron
 import cron from "node-cron";
 import { getSettings, getDb } from "../db/sqlite.js";
 import { generateBriefing } from "./claude.js";
+import { sendBriefingEmail } from "./inkbox.js";
 import { checkDuplicate, addToIndex } from "./rag.js";
+import { processIncomingEmails } from "./mail-commands.js";
 import { v4 as uuid } from "uuid";
-import type { Article } from "../../shared/types.js";
+import type { Article, BriefingResponse } from "../../shared/types.js";
 
 let scheduledTask: cron.ScheduledTask | null = null;
 
@@ -2280,7 +2838,19 @@ export function startScheduler(): void {
           await addToIndex(article);
         }
 
-        console.log(`[Scheduler] Briefing generated: ${briefingId}`);
+        // Send via Inkbox email
+        const briefingResponse: BriefingResponse = {
+          id: briefingId, summary, articles: allArticles,
+          relatedPast: [], generatedAt: new Date().toISOString(),
+        };
+        if (settings.deliveryEmail && settings.inkboxApiKey) {
+          await sendBriefingEmail(briefingResponse, settings);
+        }
+
+        // Check for incoming email commands
+        await processIncomingEmails();
+
+        console.log(`[Scheduler] Briefing generated + emailed: ${briefingId}`);
       } catch (err) {
         console.error("[Scheduler] Failed:", err);
       }
@@ -2310,7 +2880,7 @@ git commit -m "feat: node-cron scheduler for daily briefing (8AM EST)"
 
 ---
 
-### Task 12: ElevenLabs TTS Podcast
+### Task 15: ElevenLabs TTS Podcast
 
 **Files:**
 - Create: `server/services/tts.ts`
@@ -2560,7 +3130,7 @@ git commit -m "feat: Phase 3 — ElevenLabs TTS podcast audio generation + playe
 
 ---
 
-### Task 13: Update CLAUDE.md with Finalized Tech Stack
+### Task 16: Update CLAUDE.md with Finalized Tech Stack
 
 **Files:**
 - Modify: `CLAUDE.md`
@@ -2575,6 +3145,7 @@ Replace the Tech Stack and Web Search entries with the finalized selections:
 - **Frontend**: React 19 + TypeScript (Vite) + Tailwind v4 + shadcn/ui
 - **Backend**: Node.js + Express
 - **LLM**: Claude API (Anthropic SDK) — BYOK, web_search_20250305 tool
+- **AI Agent**: Inkbox SDK — Identity, Email (send/recv), Vault (encrypted keys)
 - **Vector DB**: Vectra (local JSON-based)
 - **Embedding**: @huggingface/transformers (all-MiniLM-L6-v2, local)
 - **DB**: SQLite (better-sqlite3)

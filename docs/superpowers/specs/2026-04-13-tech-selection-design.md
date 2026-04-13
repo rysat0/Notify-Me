@@ -4,7 +4,7 @@
 
 ## 概要
 
-Notify Me は、Claude API (BYOK) を使った パーソナライズドAIニュースブリーフィングWebアプリ。2時間ハッカソンで構築する。本ドキュメントは技術選定と全体アーキテクチャの設計仕様。
+Notify Me は、Claude API (BYOK) + Inkbox SDK を使った パーソナライズドAIニュースブリーフィングWebアプリ。Hack-a-Sprint 2026（2.5時間ハッカソン）で構築する。Inkbox のAIエージェント Identity を持ち、ニュースブリーフィングをメールで自動配信する。本ドキュメントは技術選定と全体アーキテクチャの設計仕様。
 
 ---
 
@@ -37,10 +37,13 @@ Vite + Express 統合型。Vite の proxy で `/api/*` を Express に転送。
 │  │ (RAG/dedup) │  │ (設定/履歴) │  │ (optional)     │  │
 │  └─────────────┘  └────────────┘  └────────────────┘  │
 │         │                                               │
-│  ┌──────▼──────────────────────┐                       │
-│  │ @xenova/transformers        │                       │
-│  │ (all-MiniLM-L6-v2 embedding)│                       │
-│  └─────────────────────────────┘                       │
+│  ┌──────▼──────────────────────┐  ┌────────────────┐  │
+│  │ @huggingface/transformers   │  │ Inkbox SDK     │  │
+│  │ (all-MiniLM-L6-v2 embedding)│  │ ・Identity     │  │
+│  └─────────────────────────────┘  │ ・Email配信    │  │
+│                                    │ ・Email受信    │  │
+│                                    │ ・Vault (鍵)   │  │
+│                                    └────────────────┘  │
 └─────────────────────────────────────────────────────────┘
          │ (Phase 2: MCP接続)
 ┌────────▼────────────────────┐
@@ -65,6 +68,7 @@ Vite + Express 統合型。Vite の proxy で `/api/*` を Express に転送。
 | サーバ実行 | tsx | ts-node, tsc+node | トランスパイル不要で即実行、開発速度最優先 |
 | 外部知識 | Obsidian vault MCP (既存) | 新規構築 | すでに動いているMCPサーバを再利用 |
 | LLMモデル | claude-sonnet-4-20250514 | Opus, Haiku | 速度・コスト・品質のバランス |
+| AIエージェント基盤 | Inkbox SDK (@inkbox/sdk) | 自前SMTP, SendGrid | ハッカソン必須要件。Identity+Email+Vault一体型 |
 
 ---
 
@@ -104,6 +108,7 @@ Notify-Me/
 │   │   └── tts.ts            # POST /api/tts (optional)
 │   ├── services/
 │   │   ├── claude.ts         # Claude API client (web_search + chat)
+│   │   ├── inkbox.ts         # Inkbox SDK: Identity管理 + メール送受信
 │   │   ├── rag.ts            # Vectra + embedding 管理
 │   │   ├── scheduler.ts      # node-cron (Phase 3)
 │   │   └── tts.ts            # ElevenLabs client (Phase 3)
@@ -131,12 +136,22 @@ Notify-Me/
 ```
 POST /api/brief/generate { categories, language, timeRange }
   → Claude API (web_search tool) でカテゴリごとに検索+要約
-  → @xenova/transformers で各記事をembedding化
+  → @huggingface/transformers で各記事をembedding化
   → Vectra で類似記事検索 (cosine > 0.85)
     → 重複あり: スキップ or 「続報」フラグ
     → 重複なし: 新規記事として保存
   → SQLite に記事メタデータ + ブリーフィング履歴保存
+  → Inkbox Identity でHTMLメールを配信先に送信
   → レスポンス: { summary, articles[], relatedPast[] }
+```
+
+### メール受信コマンド (Phase 2)
+
+```
+受信メール → Inkbox iterUnreadEmails() でポーリング
+  → メール本文をパース（"tech news", "change language ja" 等）
+  → コマンドに応じて設定変更 or ブリーフィング生成
+  → 結果をメール返信で通知
 ```
 
 ### チャット深掘り (Phase 3)
@@ -159,6 +174,9 @@ POST /api/chat { message, articleRefs[] }
 | `POST` | `/api/brief/generate` | ブリーフィング生成 | 1 |
 | `GET` | `/api/brief/latest` | 最新ブリーフィング取得 | 1 |
 | `GET` | `/api/brief/history` | 過去ブリーフィング一覧 | 2 |
+| `POST` | `/api/inkbox/setup` | Inkbox Identity作成 + メールボックス設定 | 1 |
+| `GET` | `/api/inkbox/status` | Inkbox Identity状態確認 | 1 |
+| `POST` | `/api/inkbox/check-mail` | 受信メールコマンド処理 | 2 |
 | `POST` | `/api/chat` | 記事深掘りチャット | 3 |
 | `POST` | `/api/tts/generate` | Podcast音声生成 | 3 |
 | `GET` | `/api/tts/:id` | 生成済み音声取得 | 3 |
@@ -178,7 +196,10 @@ CREATE TABLE settings (
   categories TEXT DEFAULT '["tech","ai"]',
   time_range INTEGER DEFAULT 24,
   sources TEXT DEFAULT '[]',
-  schedule_time TEXT DEFAULT '0 8 * * *'
+  schedule_time TEXT DEFAULT '0 8 * * *',
+  inkbox_api_key TEXT DEFAULT '',
+  inkbox_identity_handle TEXT DEFAULT 'notify-me',
+  delivery_email TEXT DEFAULT ''
 );
 
 CREATE TABLE articles (
@@ -215,22 +236,25 @@ CREATE TABLE chat_messages (
 
 ## 7. フェーズ別スコープ
 
-### Phase 1: MVP（目標60分）
+### Phase 1: MVP + Inkbox メール配信（目標70分）
 - プロジェクトスキャフォールド（Vite + Express + Tailwind + shadcn/ui）
 - SQLite セットアップ + 設定テーブル
-- 設定画面（APIキー入力 + カテゴリ・言語・時間範囲）
+- 設定画面（APIキー入力 + カテゴリ・言語・時間範囲 + Inkbox設定）
 - Claude API web_search でニュース取得 → 要約 + 本文生成
+- **Inkbox Identity 作成 + ブリーフィングをHTMLメールで配信**
 - ダッシュボードに結果表示
 
-### Phase 2: 差別化機能（目標30分）
-- Vectra + @xenova/transformers でRAG構築
+### Phase 2: RAG + Inkbox 拡張（目標30分）
+- Vectra + @huggingface/transformers でRAG構築
 - 記事保存時にembedding生成 → Vectra格納
 - 重複排除 + 関連記事フラグ
+- **Inkbox メール受信コマンド処理**（メール返信でカテゴリ変更等）
+- **Inkbox Vault でAPIキー暗号化保存**
 - Obsidian vault MCPクライアント接続（時間許容時）
 
 ### Phase 3: 拡張機能（残り時間）
 1. チャット深掘り機能（記事引用→Claude対話）
-2. node-cron スケジューラ
+2. node-cron スケジューラ（メール配信付き）
 3. ElevenLabs TTS Podcast生成
 
 ---
@@ -247,9 +271,10 @@ lucide-react
 # server/
 express, cors
 @anthropic-ai/sdk
+@inkbox/sdk
 better-sqlite3
 vectra
-@xenova/transformers
+@huggingface/transformers
 @modelcontextprotocol/sdk
 node-cron
 uuid
@@ -271,3 +296,5 @@ typescript, tsx
 | cosine閾値 0.85 の妥当性 | デフォルト値として採用、実測後に調整可能 |
 | 同時生成リクエスト | UIでボタンdisable + サーバ側フラグ |
 | Phase 2 MCP接続 | @modelcontextprotocol/sdk Client で stdio接続 |
+| Inkbox API 未検証アカウント制限 | 事前にIdentity作成+メール認証完了。未認証時は10通/日 |
+| Inkbox Vault 鍵管理 | vault key を .env に保存、サーバ起動時に unlock |
