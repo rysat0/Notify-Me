@@ -137,6 +137,53 @@ router.post("/generate", async (req, res) => {
   }
 });
 
+// POST /api/brief/send-email — resend latest briefing via email
+router.post("/send-email", async (_req, res) => {
+  const settings = getSettings();
+  if (!settings.deliveryEmail || !settings.inkboxApiKey) {
+    res.status(400).json({ error: "Inkbox or delivery email not configured" });
+    return;
+  }
+
+  const db = getDb();
+  const briefing = db
+    .prepare("SELECT * FROM briefings ORDER BY generated_at DESC LIMIT 1")
+    .get() as Record<string, unknown> | undefined;
+
+  if (!briefing) {
+    res.status(404).json({ error: "No briefing to send" });
+    return;
+  }
+
+  const articles = db
+    .prepare("SELECT * FROM articles WHERE briefing_id = ?")
+    .all(briefing.id as string) as Array<Record<string, unknown>>;
+
+  const response: BriefingResponse = {
+    id: briefing.id as string,
+    summary: briefing.summary as string,
+    articles: articles.map((a) => ({
+      id: a.id as string, title: a.title as string,
+      summary: a.summary as string, body: a.body as string,
+      source: a.source as string, sourceUrl: a.source_url as string,
+      category: a.category as string, language: a.language as string,
+      publishedAt: a.published_at as string, fetchedAt: a.fetched_at as string,
+      briefingId: a.briefing_id as string,
+      isFollowUp: !!(a.is_follow_up as number),
+      relatedArticleIds: JSON.parse((a.related_article_ids as string) || "[]"),
+    })),
+    relatedPast: [],
+    generatedAt: briefing.generated_at as string,
+  };
+
+  try {
+    await sendBriefingEmail(response, settings);
+    res.json({ sent: true, to: settings.deliveryEmail });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Email send failed" });
+  }
+});
+
 // GET /api/brief/latest
 router.get("/latest", (_req, res) => {
   const db = getDb();
