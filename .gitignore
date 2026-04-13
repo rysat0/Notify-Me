@@ -1,6 +1,9 @@
 .DS_Store
 .env
 .env.*
+node_modules/
+dist/
+*.db
 
 # Claude Code project settings (contains local paths)
 .claude/settings.json

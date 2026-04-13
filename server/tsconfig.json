@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "paths": {
+      "@notify-me/shared": ["../shared/types.ts"]
+    }
+  },
+  "include": [".", "../shared"]
+}
