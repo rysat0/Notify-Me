@@ -17,26 +17,30 @@
 | Action | File | Responsibility |
 |--------|------|----------------|
 | Create | `package.json` | Root: concurrently runs client + server |
+| Create | `pnpm-workspace.yaml` | pnpm workspace config (client, server, shared) |
 | Create | `tsconfig.json` | Root: shared TS config |
+| Create | `shared/package.json` | Shared workspace package (@notify-me/shared) |
 | Create | `shared/types.ts` | Shared types: Article, BriefingResponse, UserConfig, ChatMessage |
-| Create | `client/package.json` | Frontend deps |
+| Create | `client/package.json` | Frontend deps + @notify-me/shared workspace ref |
 | Create | `client/index.html` | Vite entry HTML |
 | Create | `client/vite.config.ts` | Vite + Tailwind + proxy /api → :3001 |
+| Create | `client/components.json` | shadcn/ui config (Tailwind v4 mode) |
 | Create | `client/src/main.tsx` | React entry |
 | Create | `client/src/App.tsx` | Router + layout |
 | Create | `client/src/app.css` | Tailwind base imports |
+| Create | `client/src/lib/utils.ts` | shadcn/ui cn() utility |
 | Create | `client/src/lib/api.ts` | Fetch wrapper for /api/* |
-| Create | `client/src/components/Dashboard.tsx` | Briefing display |
-| Create | `client/src/components/Settings.tsx` | BYOK + config form |
-| Create | `client/src/components/ArticleCard.tsx` | Single article card |
-| Create | `server/package.json` | Backend deps |
+| Create | `client/src/components/Dashboard.tsx` | Briefing display (shadcn Card/Button) |
+| Create | `client/src/components/Settings.tsx` | BYOK + config form (shadcn Input/Select) |
+| Create | `client/src/components/ArticleCard.tsx` | Single article card (shadcn Card/Badge) |
+| Create | `server/package.json` | Backend deps + @notify-me/shared workspace ref |
 | Create | `server/tsconfig.json` | Server TS config |
 | Create | `server/index.ts` | Express entry point |
 | Create | `server/db/schema.sql` | SQLite table definitions |
 | Create | `server/db/sqlite.ts` | DB connection + init |
 | Create | `server/routes/settings.ts` | GET/PUT /api/settings |
 | Create | `server/routes/briefing.ts` | POST /api/brief/generate, GET /api/brief/latest |
-| Create | `server/services/claude.ts` | Claude API client with web_search |
+| Create | `server/services/claude.ts` | Claude API client with web_search (model selectable) |
 
 ### Phase 2: RAG + MCP
 
@@ -68,13 +72,17 @@
 
 **Files:**
 - Create: `package.json`
+- Create: `pnpm-workspace.yaml`
 - Create: `tsconfig.json`
+- Create: `shared/package.json`
 - Create: `client/package.json`
 - Create: `client/index.html`
 - Create: `client/vite.config.ts`
+- Create: `client/components.json`
 - Create: `client/src/main.tsx`
 - Create: `client/src/App.tsx`
 - Create: `client/src/app.css`
+- Create: `client/src/lib/utils.ts`
 - Create: `server/package.json`
 - Create: `server/tsconfig.json`
 - Create: `server/index.ts`
@@ -97,7 +105,28 @@
 }
 ```
 
-- [ ] **Step 2: Create root tsconfig.json**
+- [ ] **Step 2: Create pnpm-workspace.yaml**
+
+```yaml
+packages:
+  - "client"
+  - "server"
+  - "shared"
+```
+
+- [ ] **Step 3: Create shared/package.json**
+
+```json
+{
+  "name": "@notify-me/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./types.ts"
+}
+```
+
+- [ ] **Step 4: Create root tsconfig.json**
 
 ```json
 {
@@ -117,14 +146,14 @@
 }
 ```
 
-- [ ] **Step 3: Scaffold Vite React client**
+- [ ] **Step 5: Scaffold Vite React client**
 
 ```bash
 cd /Users/k22062kk/Downloads/Notify-Me
 pnpm create vite client --template react-ts
 ```
 
-- [ ] **Step 4: Replace client/vite.config.ts with proxy**
+- [ ] **Step 6: Replace client/vite.config.ts with proxy**
 
 ```typescript
 import { defineConfig } from "vite";
@@ -152,20 +181,42 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 5: Install client dependencies**
+- [ ] **Step 7: Install client dependencies + shadcn/ui**
 
 ```bash
 cd /Users/k22062kk/Downloads/Notify-Me/client
-pnpm add tailwindcss @tailwindcss/vite lucide-react react-router-dom
+pnpm add tailwindcss @tailwindcss/vite lucide-react react-router-dom @notify-me/shared
+pnpm add clsx tailwind-merge class-variance-authority
 ```
 
-- [ ] **Step 6: Create client/src/app.css**
+- [ ] **Step 8: Initialize shadcn/ui and add components**
+
+```bash
+cd /Users/k22062kk/Downloads/Notify-Me/client
+pnpm dlx shadcn@latest init -d
+pnpm dlx shadcn@latest add card button input tabs dialog select badge
+```
+
+Note: The `-d` flag uses defaults. After init, verify `components.json` has `"tailwind": { "config": "" }` (empty string = Tailwind v4 mode, no separate config needed).
+
+- [ ] **Step 9: Create client/src/lib/utils.ts (shadcn/ui helper)**
+
+```typescript
+import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+```
+
+- [ ] **Step 10: Create client/src/app.css**
 
 ```css
 @import "tailwindcss";
 ```
 
-- [ ] **Step 7: Create client/src/main.tsx**
+- [ ] **Step 11: Create client/src/main.tsx**
 
 ```tsx
 import { StrictMode } from "react";
@@ -183,7 +234,7 @@ createRoot(document.getElementById("root")!).render(
 );
 ```
 
-- [ ] **Step 8: Create client/src/App.tsx (placeholder)**
+- [ ] **Step 12: Create client/src/App.tsx (placeholder)**
 
 ```tsx
 import { Routes, Route, Link } from "react-router-dom";
@@ -215,7 +266,7 @@ function App() {
 export default App;
 ```
 
-- [ ] **Step 9: Create server/package.json**
+- [ ] **Step 13: Create server/package.json**
 
 ```json
 {
@@ -228,6 +279,7 @@ export default App;
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
+    "@notify-me/shared": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
@@ -243,7 +295,7 @@ export default App;
 }
 ```
 
-- [ ] **Step 10: Create server/tsconfig.json**
+- [ ] **Step 14: Create server/tsconfig.json**
 
 ```json
 {
@@ -252,14 +304,14 @@ export default App;
     "outDir": "./dist",
     "rootDir": ".",
     "paths": {
-      "@shared/*": ["../shared/*"]
+      "@notify-me/shared": ["../shared/types.ts"]
     }
   },
   "include": [".", "../shared"]
 }
 ```
 
-- [ ] **Step 11: Create server/index.ts**
+- [ ] **Step 15: Create server/index.ts**
 
 ```typescript
 import express from "express";
@@ -286,21 +338,29 @@ app.listen(PORT, () => {
 });
 ```
 
-- [ ] **Step 12: Install all dependencies and verify startup**
+- [ ] **Step 16: Install all dependencies via pnpm workspaces**
 
 ```bash
 cd /Users/k22062kk/Downloads/Notify-Me
 pnpm install
-cd server && pnpm install
-cd ../client && pnpm install
-cd ..
 ```
 
-- [ ] **Step 13: Commit**
+Note: With pnpm workspaces, a single `pnpm install` at root installs all workspace deps. No need to `cd` into each directory.
+
+- [ ] **Step 17: Verify both servers start**
+
+```bash
+cd /Users/k22062kk/Downloads/Notify-Me
+pnpm dev
+```
+
+Expected: Vite on :5173, Express on :3001. Open http://localhost:5173 to see placeholder.
+
+- [ ] **Step 18: Commit**
 
 ```bash
 git add -A
-git commit -m "feat: project scaffold — Vite + Express + Tailwind monorepo"
+git commit -m "feat: project scaffold — pnpm workspaces + Vite + Express + Tailwind + shadcn/ui"
 ```
 
 ---
@@ -339,9 +399,15 @@ export interface BriefingResponse {
   generatedAt: string;
 }
 
+export type ClaudeModel =
+  | "claude-sonnet-4-20250514"
+  | "claude-opus-4-20250514"
+  | "claude-haiku-4-5-20251001";
+
 export interface UserConfig {
   claudeApiKey: string;
   elevenlabsApiKey?: string;
+  model: ClaudeModel;
   language: "en" | "ja" | "zh";
   summaryLength: "short" | "medium" | "detailed";
   bodyLength: "brief" | "standard" | "deep";
@@ -375,6 +441,7 @@ CREATE TABLE IF NOT EXISTS settings (
   id INTEGER PRIMARY KEY DEFAULT 1,
   claude_api_key TEXT NOT NULL DEFAULT '',
   elevenlabs_api_key TEXT DEFAULT '',
+  model TEXT DEFAULT 'claude-sonnet-4-20250514',
   language TEXT DEFAULT 'en',
   summary_length TEXT DEFAULT 'medium',
   body_length TEXT DEFAULT 'standard',
@@ -455,6 +522,7 @@ export function getSettings(): UserConfig {
   return {
     claudeApiKey: row.claude_api_key as string,
     elevenlabsApiKey: (row.elevenlabs_api_key as string) || undefined,
+    model: (row.model as UserConfig["model"]) || "claude-sonnet-4-20250514",
     language: row.language as UserConfig["language"],
     summaryLength: row.summary_length as UserConfig["summaryLength"],
     bodyLength: row.body_length as UserConfig["bodyLength"],
@@ -477,6 +545,10 @@ export function updateSettings(config: Partial<UserConfig>): void {
   if (config.elevenlabsApiKey !== undefined) {
     fields.push("elevenlabs_api_key = ?");
     values.push(config.elevenlabsApiKey);
+  }
+  if (config.model !== undefined) {
+    fields.push("model = ?");
+    values.push(config.model);
   }
   if (config.language !== undefined) {
     fields.push("language = ?");
@@ -605,6 +677,7 @@ import { v4 as uuid } from "uuid";
 
 interface SearchAndSummarizeOptions {
   apiKey: string;
+  model: string;
   category: string;
   language: string;
   timeRange: number;
@@ -648,7 +721,7 @@ export async function generateBriefing(
         : "Respond entirely in English.";
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: options.model || "claude-sonnet-4-20250514",
     max_tokens: 4096,
     tools: [
       {
@@ -797,6 +870,7 @@ router.post("/generate", async (req, res) => {
     for (const category of categories) {
       const result = await generateBriefing({
         apiKey: settings.claudeApiKey,
+        model: settings.model,
         category,
         language,
         timeRange,
@@ -1307,6 +1381,51 @@ export function Settings() {
             </label>
           ))}
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-lg font-semibold text-zinc-300">Claude Model</h3>
+        <p className="text-xs text-zinc-500">
+          Choose the model for news search and summarization.
+        </p>
+        {(
+          [
+            {
+              value: "claude-sonnet-4-20250514",
+              label: "Sonnet 4",
+              desc: "Balanced speed/quality (recommended)",
+            },
+            {
+              value: "claude-opus-4-20250514",
+              label: "Opus 4",
+              desc: "Highest quality, slower",
+            },
+            {
+              value: "claude-haiku-4-5-20251001",
+              label: "Haiku 4.5",
+              desc: "Fastest, most affordable",
+            },
+          ] as const
+        ).map((m) => (
+          <label
+            key={m.value}
+            className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3 cursor-pointer hover:border-zinc-600"
+          >
+            <input
+              type="radio"
+              name="model"
+              checked={config.model === m.value}
+              onChange={() => setConfig({ ...config, model: m.value })}
+              className="accent-blue-600"
+            />
+            <div>
+              <span className="text-sm font-medium text-zinc-200">
+                {m.label}
+              </span>
+              <span className="ml-2 text-xs text-zinc-500">{m.desc}</span>
+            </div>
+          </label>
+        ))}
       </section>
 
       <button
@@ -1835,7 +1954,7 @@ Provide insightful analysis, background context, and connections between topics.
   ];
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: settings.model || "claude-sonnet-4-20250514",
     max_tokens: 2048,
     system: systemPrompt,
     messages,
@@ -2228,7 +2347,7 @@ export async function generatePodcastAudio(
     .join("\n");
 
   const scriptResponse = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: settings.model || "claude-sonnet-4-20250514",
     max_tokens: 2048,
     messages: [
       {
