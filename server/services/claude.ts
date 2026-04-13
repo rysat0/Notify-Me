@@ -2,17 +2,17 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Article } from "../../shared/types.js";
 import { v4 as uuid } from "uuid";
 
-interface SearchAndSummarizeOptions {
+interface BriefingAllOptions {
   apiKey: string;
   model: string;
-  category: string;
+  categories: string[];
   language: string;
   timeRange: number;
   summaryLength: string;
   bodyLength: string;
 }
 
-interface BriefingResult {
+export interface BriefingResult {
   summary: string;
   articles: Article[];
 }
@@ -30,7 +30,7 @@ const BODY_LENGTH_MAP: Record<string, string> = {
 };
 
 export async function generateBriefing(
-  options: SearchAndSummarizeOptions
+  options: BriefingAllOptions
 ): Promise<BriefingResult> {
   const client = new Anthropic({ apiKey: options.apiKey });
 
@@ -47,6 +47,8 @@ export async function generateBriefing(
         ? "Respond entirely in Chinese."
         : "Respond entirely in English.";
 
+  const categoryList = options.categories.join(", ");
+
   const response = await client.messages.create({
     model: options.model || "claude-sonnet-4-20250514",
     max_tokens: 4096,
@@ -60,17 +62,18 @@ export async function generateBriefing(
     messages: [
       {
         role: "user",
-        content: `You are a news research assistant. Search the web for the latest ${options.category} news from ${timeDesc}.
+        content: `You are a news research assistant. Search the web for the latest news from ${timeDesc} across these categories: ${categoryList}.
 
 ${languageInstruction}
 
-Find 3-5 of the most important and interesting news stories. For each story, provide:
+Find 1-2 of the most important stories PER CATEGORY. For each story, provide:
 1. A clear title
 2. The source name and URL
-3. A summary (${SUMMARY_LENGTH_MAP[options.summaryLength] || SUMMARY_LENGTH_MAP.medium})
-4. A detailed body (${BODY_LENGTH_MAP[options.bodyLength] || BODY_LENGTH_MAP.standard})
+3. Which category it belongs to
+4. A summary (${SUMMARY_LENGTH_MAP[options.summaryLength] || SUMMARY_LENGTH_MAP.medium})
+5. A detailed body (${BODY_LENGTH_MAP[options.bodyLength] || BODY_LENGTH_MAP.standard})
 
-After listing individual articles, provide an overall daily summary that captures the key themes and trends.
+After listing individual articles, provide an overall daily summary that captures the key themes and trends across all categories.
 
 Respond in this exact JSON format:
 {
@@ -80,6 +83,7 @@ Respond in this exact JSON format:
       "title": "...",
       "source": "source name",
       "sourceUrl": "https://...",
+      "category": "one of: ${categoryList}",
       "summary": "...",
       "body": "..."
     }
@@ -111,6 +115,7 @@ Return ONLY valid JSON, no markdown fences.`,
       title: string;
       source: string;
       sourceUrl: string;
+      category?: string;
       summary: string;
       body: string;
     }>;
@@ -123,7 +128,7 @@ Return ONLY valid JSON, no markdown fences.`,
     body: a.body,
     source: a.source,
     sourceUrl: a.sourceUrl,
-    category: options.category,
+    category: a.category || options.categories[0],
     language: options.language,
     publishedAt: now.toISOString(),
     fetchedAt: now.toISOString(),

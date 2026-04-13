@@ -37,27 +37,23 @@ router.post("/generate", async (req, res) => {
     const summaryLength = body.summaryLength || settings.summaryLength;
     const bodyLength = body.bodyLength || settings.bodyLength;
 
-    const allArticles: Article[] = [];
-    const allSummaries: string[] = [];
+    // Single API call with all categories (much faster than per-category)
+    const result = await generateBriefing({
+      apiKey: settings.claudeApiKey,
+      model: settings.model,
+      categories,
+      language,
+      timeRange,
+      summaryLength,
+      bodyLength,
+    });
 
-    for (const category of categories) {
-      const result = await generateBriefing({
-        apiKey: settings.claudeApiKey,
-        model: settings.model,
-        category,
-        language,
-        timeRange,
-        summaryLength,
-        bodyLength,
-      });
-      allSummaries.push(result.summary);
-      allArticles.push(...result.articles);
-    }
+    const allArticles = result.articles;
+    const combinedSummary = result.summary;
 
     // Save briefing to DB
     const db = getDb();
     const briefingId = uuid();
-    const combinedSummary = allSummaries.join("\n\n");
 
     db.prepare(
       "INSERT INTO briefings (id, summary, settings_snapshot) VALUES (?, ?, ?)"
