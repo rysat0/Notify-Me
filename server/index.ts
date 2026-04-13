@@ -6,6 +6,8 @@ import inkboxRouter from "./routes/inkbox.js";
 import briefingRouter from "./routes/briefing.js";
 import { initInkbox } from "./services/inkbox.js";
 import { initMcpClient } from "./mcp/client.js";
+import { initEmbedding } from "./services/embedding.js";
+import { initRag } from "./services/rag.js";
 
 const app = express();
 const PORT = 3001;
@@ -17,6 +19,12 @@ initDb();
 
 initMcpClient().catch(() => {
   console.log("Obsidian MCP not available — continuing without vault.");
+});
+
+initEmbedding().then(() => initRag()).then(() => {
+  console.log("RAG system ready.");
+}).catch((err) => {
+  console.warn("RAG init failed (non-fatal):", err);
 });
 
 // Health check

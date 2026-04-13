@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import { getDb, getSettings } from "../db/sqlite.js";
 import { generateBriefing } from "../services/claude.js";
 import { sendBriefingEmail } from "../services/inkbox.js";
+import { checkDuplicate, addToIndex } from "../services/rag.js";
 import type {
   Article,
   BriefingResponse,
@@ -62,33 +63,63 @@ router.post("/generate", async (req, res) => {
       "INSERT INTO briefings (id, summary, settings_snapshot) VALUES (?, ?, ?)"
     ).run(briefingId, combinedSummary, JSON.stringify(settings));
 
-    // Save articles to DB
+    // Save articles to DB with RAG dedup
     const insertArticle = db.prepare(`
-      INSERT INTO articles (id, title, summary, body, source, source_url, category, language, published_at, briefing_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO articles (id, title, summary, body, source, source_url, category, language, published_at, briefing_id, is_follow_up, related_article_ids)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const dedupedArticles: Article[] = [];
+
     for (const article of allArticles) {
+      const dedup = await checkDuplicate(article.title, article.summary);
+
+      if (dedup.isDuplicate) {
+        console.log(`Skipping duplicate: ${article.title} (similarity: ${dedup.similarity.toFixed(2)})`);
+        continue;
+      }
+
       article.briefingId = briefingId;
+      article.isFollowUp = dedup.isFollowUp;
+      article.relatedArticleIds = dedup.relatedArticleIds;
+
       insertArticle.run(
-        article.id,
-        article.title,
-        article.summary,
-        article.body,
-        article.source,
-        article.sourceUrl,
-        article.category,
-        article.language,
-        article.publishedAt,
-        briefingId
+        article.id, article.title, article.summary, article.body,
+        article.source, article.sourceUrl, article.category, article.language,
+        article.publishedAt, briefingId,
+        dedup.isFollowUp ? 1 : 0,
+        JSON.stringify(dedup.relatedArticleIds)
       );
+
+      await addToIndex(article);
+      dedupedArticles.push(article);
+    }
+
+    const relatedIds = [...new Set(dedupedArticles.flatMap((a) => a.relatedArticleIds || []))];
+    const relatedPast: Article[] = [];
+    if (relatedIds.length > 0) {
+      const placeholders = relatedIds.map(() => "?").join(",");
+      const rows = db
+        .prepare(`SELECT * FROM articles WHERE id IN (${placeholders}) AND briefing_id != ?`)
+        .all(...relatedIds, briefingId) as Array<Record<string, unknown>>;
+
+      for (const a of rows) {
+        relatedPast.push({
+          id: a.id as string, title: a.title as string,
+          summary: a.summary as string, body: a.body as string,
+          source: a.source as string, sourceUrl: a.source_url as string,
+          category: a.category as string, language: a.language as string,
+          publishedAt: a.published_at as string, fetchedAt: a.fetched_at as string,
+          briefingId: a.briefing_id as string,
+        });
+      }
     }
 
     const response: BriefingResponse = {
       id: briefingId,
       summary: combinedSummary,
-      articles: allArticles,
-      relatedPast: [],
+      articles: dedupedArticles,
+      relatedPast,
       generatedAt: new Date().toISOString(),
     };
 
